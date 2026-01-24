@@ -16,8 +16,8 @@
 - `cargo build --release`: release build (binary in `target/release/wtp-mcp-rs`).
 - `cargo test`: run unit and integration tests.
 - `cargo test --test integration`: run integration tests (skips if `wtp` is not on PATH).
-- `cargo fmt --check`: enforce Rust formatting.
-- `cargo clippy -- -D warnings`: lint with Clippy.
+- `cargo fmt --all -- --check`: enforce Rust formatting (matches CI).
+- `cargo clippy --all-targets --all-features -- -D warnings`: lint with Clippy (matches CI).
 - `node scripts/check-version-sync.js`: verify Rust/npm version alignment (Cargo.toml vs `npm/base/package.json`).
 
 ## Coding Style & Naming Conventions
