@@ -1,6 +1,7 @@
 #[cfg(unix)]
 mod stubbed {
     use std::fs;
+    use std::io::Write;
     use std::path::PathBuf;
 
     use tempfile::TempDir;
@@ -28,15 +29,22 @@ feature-branch feature/awesome def456\n\
             fs::create_dir_all(&repo_root).expect("repo dir");
 
             let path = dir.path().join("wtp");
-            fs::write(&path, script).expect("write stub");
+            let temp_path = dir.path().join("wtp.tmp");
+            {
+                let mut file = fs::File::create(&temp_path).expect("create stub");
+                file.write_all(script.as_bytes()).expect("write stub");
+                file.sync_all().expect("sync stub");
+            }
 
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
-                let mut perms = fs::metadata(&path).expect("metadata").permissions();
+                let mut perms = fs::metadata(&temp_path).expect("metadata").permissions();
                 perms.set_mode(0o755);
-                fs::set_permissions(&path, perms).expect("chmod");
+                fs::set_permissions(&temp_path, perms).expect("chmod");
             }
+
+            fs::rename(&temp_path, &path).expect("persist stub");
 
             Self {
                 _dir: dir,
