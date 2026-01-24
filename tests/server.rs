@@ -1,4 +1,4 @@
-#![cfg(unix)]
+#![cfg(all(unix, not(target_os = "linux")))]
 
 use rmcp::model::{
     CallToolRequestParams, NumberOrString, ReadResourceRequestParams, ResourceContents,
