@@ -19,7 +19,7 @@ pub struct Config {
 }
 
 /// Configuration for resolving the `wtp` binary.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 #[serde(default)]
 pub struct WtpConfig {
     /// Optional explicit path to the `wtp` binary.
@@ -34,14 +34,6 @@ pub struct SecurityPolicy {
     pub allow_hooks: bool,
     /// Whether branch deletion is allowed.
     pub allow_branch_delete: bool,
-}
-
-impl Default for WtpConfig {
-    fn default() -> Self {
-        Self {
-            path: None,
-        }
-    }
 }
 
 /// CLI overrides applied on top of TOML configuration.
@@ -100,12 +92,7 @@ mod tests {
 
     #[rstest]
     #[case(Some("/tmp/repo"), None, Some("/tmp/repo"), None)]
-    #[case(
-        None,
-        Some("/usr/local/bin/wtp"),
-        None,
-        Some("/usr/local/bin/wtp"),
-    )]
+    #[case(None, Some("/usr/local/bin/wtp"), None, Some("/usr/local/bin/wtp"))]
     fn test_merge_cli(
         mut default_config: Config,
         #[case] repo_root: Option<&str>,

@@ -139,6 +139,25 @@ feature-branch feature/awesome def456\n\
     }
 
     #[tokio::test]
+    async fn add_worktree_creates_default_wtp_config_when_missing() {
+        let stub = make_stub();
+        let input = AddWorktreeInput {
+            branch: Some("feature/awesome".to_string()),
+            new_branch: None,
+            from: None,
+        };
+
+        let _ = tools::add_worktree(&stub.runner(), input, &SecurityPolicy::default())
+            .await
+            .expect("add worktree");
+
+        let config_path = stub.repo_root.join(".wtp.yml");
+        assert!(config_path.exists());
+        let contents = fs::read_to_string(config_path).expect("read .wtp.yml");
+        assert!(contents.contains("base_dir: .worktrees"));
+    }
+
+    #[tokio::test]
     async fn add_worktree_requires_branch_or_new_branch() {
         let stub = make_stub();
         let input = AddWorktreeInput {

@@ -1,5 +1,8 @@
 //! Worktree lifecycle tool helpers.
 
+use std::fs;
+use std::path::Path;
+
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -11,7 +14,7 @@ use crate::wtp::{WtpRunner, parse_list};
 /// Input for listing worktrees.
 #[derive(Debug, Deserialize, JsonSchema)]
 #[schemars(
-    description = "Input for list-worktrees. No parameters; lists all worktrees (isolated folders per branch) in the repo."
+    description = "Input for list-worktrees. No parameters; lists all worktrees (isolated folders per branch) in the repo. Paths are returned as printed by wtp (may be relative or abbreviated)."
 )]
 pub struct ListWorktreesInput {}
 
@@ -31,7 +34,7 @@ pub struct ListWorktreesOutput {
 /// Input for adding a worktree.
 #[derive(Debug, Deserialize, JsonSchema)]
 #[schemars(
-    description = "Input for add-worktree. Creates an isolated worktree folder for a branch."
+    description = "Input for add-worktree. Creates an isolated worktree folder for a branch. Intended flow: run init-config, inspect/configure .wtp.yml (defaults.base_dir and optional hooks), then call add-worktree. If .wtp.yml is missing, a minimal file with defaults.base_dir=.worktrees is created. Hooks are optional post-create actions (copy files, symlink dirs, run setup commands) that run after add-worktree and require allow_hooks=true."
 )]
 pub struct AddWorktreeInput {
     /// Existing branch to check out into a new worktree. Mutually exclusive with `new_branch`.
@@ -73,9 +76,23 @@ pub struct AddWorktreeOutput {
     pub hint: Option<String>,
 }
 
+const DEFAULT_WTP_YML: &str = "version: \"1.0\"\n\ndefaults:\n  base_dir: .worktrees\n";
+
+fn ensure_wtp_config(repo_root: &Path) -> Result<bool> {
+    let config_path = repo_root.join(".wtp.yml");
+    if config_path.exists() {
+        return Ok(false);
+    }
+
+    fs::write(&config_path, DEFAULT_WTP_YML)?;
+    Ok(true)
+}
+
 /// Input for removing a worktree.
 #[derive(Debug, Deserialize, JsonSchema)]
-#[schemars(description = "Input for remove-worktree. Removes a worktree folder by name.")]
+#[schemars(
+    description = "Input for remove-worktree. Removes a worktree folder by name. If hooks are configured for removal, wtp runs them during remove-worktree for cleanup but they require allow_hooks=true; otherwise the call will fail."
+)]
 pub struct RemoveWorktreeInput {
     /// Worktree selector from list-worktrees (typically a branch name).
     #[schemars(description = "Worktree selector from list-worktrees (typically a branch name).")]
@@ -111,6 +128,36 @@ pub struct RemoveWorktreeOutput {
     pub branch_deleted: bool,
 }
 
+/// Input for merge-worktree.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(
+    description = "Input for merge-worktree. Resolves the worktree branch and returns a git merge command."
+)]
+pub struct MergeWorktreeInput {
+    /// Worktree selector from list-worktrees (typically a branch name).
+    #[schemars(description = "Worktree selector from list-worktrees (typically a branch name).")]
+    pub name: String,
+}
+
+/// Output for merge-worktree.
+#[derive(Debug, Serialize, JsonSchema)]
+#[schemars(
+    description = "Output for merge-worktree. Contains the branch name plus a git merge command."
+)]
+pub struct MergeWorktreeOutput {
+    /// Branch checked out in the worktree.
+    #[schemars(description = "Branch checked out in the worktree.")]
+    pub branch: String,
+    /// Git command to merge the branch into the current branch.
+    #[schemars(description = "Git command to merge the branch into the current branch.")]
+    pub command: String,
+    /// Optional hint for where to run the command.
+    #[schemars(
+        description = "Optional hint for where to run the command (typically from the target branch worktree)."
+    )]
+    pub hint: Option<String>,
+}
+
 /// List worktrees via `wtp list`.
 pub async fn list_worktrees(
     runner: &WtpRunner,
@@ -138,23 +185,24 @@ pub async fn add_worktree(
         });
     }
 
-    let branch_name: String;
-
-    if let Some(ref new_branch) = input.new_branch {
-        branch_name = new_branch.clone();
-        let mut args = vec!["add", "-b", new_branch.as_str()];
+    let (branch_name, args): (String, Vec<String>) = if let Some(ref new_branch) = input.new_branch
+    {
+        let mut args = vec!["add".to_string(), "-b".to_string(), new_branch.clone()];
         if let Some(ref from) = input.from {
-            args.push(from.as_str());
+            args.push(from.clone());
         }
-        runner.run_checked(&args).await?;
+        (new_branch.clone(), args)
     } else if let Some(ref branch) = input.branch {
-        branch_name = branch.clone();
-        runner.run_checked(&["add", branch.as_str()]).await?;
+        (branch.clone(), vec!["add".to_string(), branch.clone()])
     } else {
         return Err(Error::ConfigError {
             message: "Either 'branch' or 'new_branch' must be specified".to_string(),
         });
-    }
+    };
+
+    let created_config = ensure_wtp_config(runner.repo_root())?;
+    let args_ref: Vec<&str> = args.iter().map(|arg| arg.as_str()).collect();
+    runner.run_checked(&args_ref).await?;
 
     // Find the newly created worktree by listing all worktrees and matching by branch
     let list_output = runner.run_checked(&["list"]).await?;
@@ -179,14 +227,22 @@ pub async fn add_worktree(
     let cd_output = runner.run_checked(&["cd", &created_worktree.name]).await?;
     let path = cd_output.trim().to_string();
 
+    let mut hint = format!(
+        "Ask the user if they want to set the workdir to this worktree. You can run wtp cd {} (or get-worktree-path with name '{}') and set workdir to the returned path.",
+        created_worktree.name, created_worktree.name
+    );
+    if created_config {
+        hint = format!(
+            "Created .wtp.yml with defaults.base_dir = .worktrees. Review it if you want a different worktree layout. {}",
+            hint
+        );
+    }
+
     Ok(AddWorktreeOutput {
         name: created_worktree.name.clone(),
         path,
         branch: branch_name,
-        hint: Some(format!(
-            "Ask the user if they want to set the workdir to this worktree. You can run wtp cd {} (or get-worktree-path with name '{}') and set workdir to the returned path.",
-            created_worktree.name, created_worktree.name
-        )),
+        hint: Some(hint),
     })
 }
 
@@ -229,6 +285,36 @@ pub async fn remove_worktree(
     })
 }
 
+/// Return a git merge command for the worktree branch.
+pub async fn merge_worktree(
+    runner: &WtpRunner,
+    input: MergeWorktreeInput,
+) -> Result<MergeWorktreeOutput> {
+    let stdout = runner.run_checked(&["list"]).await?;
+    let worktrees = parse_list(&stdout).map_err(|e| Error::ParseError {
+        message: e.to_string(),
+        raw_output: stdout.clone(),
+    })?;
+
+    let selector = input.name.as_str();
+    let branch = worktrees
+        .iter()
+        .find(|wt| wt.name == selector || wt.branch == selector || wt.path == selector)
+        .map(|wt| wt.branch.clone())
+        .ok_or_else(|| Error::ConfigError {
+            message: format!(
+                "Worktree '{}' not found; run list-worktrees to see available names",
+                selector
+            ),
+        })?;
+
+    Ok(MergeWorktreeOutput {
+        branch: branch.clone(),
+        command: format!("git merge {}", branch),
+        hint: Some("Run this from your target branch worktree (usually main).".to_string()),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -262,6 +348,13 @@ mod tests {
         assert_eq!(input.name, "feature-test");
         assert_eq!(input.force, Some(true));
         assert_eq!(input.with_branch, Some(true));
+    }
+
+    #[test]
+    fn test_merge_input_deserialize() {
+        let json = r#"{"name": "feature/merge"}"#;
+        let input: MergeWorktreeInput = serde_json::from_str(json).unwrap();
+        assert_eq!(input.name, "feature/merge");
     }
 
     #[test]

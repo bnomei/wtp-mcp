@@ -13,6 +13,6 @@ pub use utility::{get_worktree_path, init_config, shell_hook, shell_init};
 
 pub use worktree::{
     AddWorktreeInput, AddWorktreeOutput, ListWorktreesInput, ListWorktreesOutput,
-    RemoveWorktreeInput, RemoveWorktreeOutput,
+    MergeWorktreeInput, MergeWorktreeOutput, RemoveWorktreeInput, RemoveWorktreeOutput,
 };
-pub use worktree::{add_worktree, list_worktrees, remove_worktree};
+pub use worktree::{add_worktree, list_worktrees, merge_worktree, remove_worktree};

@@ -9,7 +9,7 @@ use crate::wtp::WtpRunner;
 /// Input for `init-config`.
 #[derive(Debug, Deserialize, JsonSchema)]
 #[schemars(
-    description = "Input for init-config. No parameters; creates a .wtp.yml in the repo root for worktree layout and optional hooks."
+    description = "Input for init-config. No parameters; runs wtp init to create .wtp.yml in the repo root. The generated file includes example hooks (copy files, symlink dirs, run setup commands) that run after add-worktree and a default base_dir; review and edit it before add-worktree."
 )]
 pub struct InitConfigInput {}
 

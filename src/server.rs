@@ -21,8 +21,9 @@ use crate::resources;
 use crate::security::PolicyGuard;
 use crate::tools::{
     AddWorktreeInput, AddWorktreeOutput, GetWorktreePathInput, InitConfigInput, InitConfigOutput,
-    ListWorktreesInput, ListWorktreesOutput, RemoveWorktreeInput, RemoveWorktreeOutput,
-    ShellHookInput, ShellInitInput, ShellScriptOutput, WorktreePathOutput,
+    ListWorktreesInput, ListWorktreesOutput, MergeWorktreeInput, MergeWorktreeOutput,
+    RemoveWorktreeInput, RemoveWorktreeOutput, ShellHookInput, ShellInitInput, ShellScriptOutput,
+    WorktreePathOutput,
 };
 use crate::wtp::{WtpBinary, WtpRunner};
 
@@ -33,7 +34,7 @@ use crate::wtp::{WtpBinary, WtpRunner};
 /// Parameters for the `add-worktree` tool.
 #[derive(Debug, Deserialize, JsonSchema)]
 #[schemars(
-    description = "Parameters for add-worktree. Creates an isolated worktree folder for a branch. Provide exactly one of 'branch' or 'new_branch'. After creation, consider asking the user if they want to set the workdir to the new worktree."
+    description = "Parameters for add-worktree. Creates an isolated worktree folder for a branch. Intended flow: init-config, inspect/configure .wtp.yml (defaults.base_dir and optional hooks), then add-worktree. Provide exactly one of 'branch' or 'new_branch'. After creation, consider asking the user if they want to set the workdir to the new worktree."
 )]
 pub struct AddWorktreeParams {
     /// Existing branch name to check out in a new worktree. Mutually exclusive with `new_branch`.
@@ -56,7 +57,7 @@ pub struct AddWorktreeParams {
 /// Parameters for the `remove-worktree` tool.
 #[derive(Debug, Deserialize, JsonSchema)]
 #[schemars(
-    description = "Parameters for remove-worktree. Removes an isolated worktree folder by name (use list-worktrees to discover names)."
+    description = "Parameters for remove-worktree. Removes an isolated worktree folder by name (use list-worktrees to discover names). If .wtp.yml defines hooks, allow_hooks must be true."
 )]
 pub struct RemoveWorktreeParams {
     /// Worktree selector as returned by list-worktrees (typically a branch name).
@@ -79,6 +80,19 @@ pub struct RemoveWorktreeParams {
         description = "If true, delete the branch even if unmerged (requires allow_branch_delete=true)."
     )]
     pub force_branch: Option<bool>,
+}
+
+/// Parameters for the `merge-worktree` tool.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(
+    description = "Parameters for merge-worktree. Resolves the worktree branch and returns a git merge command."
+)]
+pub struct MergeWorktreeParams {
+    /// Worktree selector as returned by list-worktrees (typically a branch name).
+    #[schemars(
+        description = "Worktree selector as returned by list-worktrees (typically a branch name)."
+    )]
+    pub name: String,
 }
 
 /// Parameters for the `get-worktree-path` tool.
@@ -157,7 +171,7 @@ impl WtpServer {
 impl WtpServer {
     #[tool(
         name = "list-worktrees",
-        description = "List worktrees (isolated folders per branch) in this repo so an agent can pick a target directory. Returns JSON { worktrees: [ { name, path, branch, head, is_main } ] }. Paths may be relative; use get-worktree-path to resolve absolute paths.",
+        description = "List worktrees (isolated folders per branch) in this repo so an agent can pick a target directory. Paths are returned as printed by wtp and may be relative or abbreviated; use get-worktree-path to resolve absolute paths. Returns JSON { worktrees: [ { name, path, branch, head, is_main } ] }.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,
@@ -175,7 +189,7 @@ impl WtpServer {
 
     #[tool(
         name = "add-worktree",
-        description = "Create a new isolated worktree folder for a branch. Provide 'branch' for an existing branch or 'new_branch' (+ optional 'from') to create one. wtp decides the directory layout based on .wtp.yml (e.g., worktree_base). If .wtp.yml defines hooks, wtp may run them; this server blocks when allow_hooks=false. Consider asking the user if they want to set the workdir to the new worktree. Returns JSON { name, path, branch, hint }.",
+        description = "Create a new isolated worktree folder for a branch. Provide 'branch' for an existing branch or 'new_branch' (+ optional 'from') to create one. Intended flow: run init-config, inspect and configure .wtp.yml (defaults.base_dir and optional hooks), then call add-worktree. If .wtp.yml is missing, this tool creates a minimal one with defaults.base_dir=.worktrees and no hooks. Hooks are optional post-create actions that can copy files (e.g., .env), symlink shared dirs, or run setup commands; when configured, wtp runs them after add-worktree completes. They improve new worktree readiness but are blocked unless allow_hooks=true. Consider asking the user if they want to set the workdir to the new worktree. Returns JSON { name, path, branch, hint }.",
         annotations(
             read_only_hint = false,
             destructive_hint = false,
@@ -205,7 +219,7 @@ impl WtpServer {
 
     #[tool(
         name = "remove-worktree",
-        description = "Remove a worktree folder by name (from list-worktrees). Use 'force' to discard uncommitted changes. Use 'with_branch'/'force_branch' to delete the branch (requires allow_branch_delete=true). Returns JSON { removed, branch_deleted }.",
+        description = "Remove a worktree folder by name (from list-worktrees). Use 'force' to discard uncommitted changes. Use 'with_branch'/'force_branch' to delete the branch (requires allow_branch_delete=true). If hooks are configured for removal, wtp runs them during remove-worktree for cleanup, but they are blocked unless allow_hooks=true. Returns JSON { removed, branch_deleted }.",
         annotations(
             read_only_hint = false,
             destructive_hint = true,
@@ -240,8 +254,32 @@ impl WtpServer {
     }
 
     #[tool(
+        name = "merge-worktree",
+        description = "Return the git merge command for a worktree branch. Provide a worktree selector; run the returned command from the target branch worktree (usually main). Returns JSON { branch, command, hint }.",
+        annotations(
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn merge_worktree(
+        &self,
+        params: Parameters<MergeWorktreeParams>,
+    ) -> Result<Json<MergeWorktreeOutput>, McpError> {
+        let runner = self.get_runner();
+        let input = MergeWorktreeInput {
+            name: params.0.name,
+        };
+        let output = crate::tools::merge_worktree(&runner, input)
+            .await
+            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        Ok(Json(output))
+    }
+
+    #[tool(
         name = "init-config",
-        description = "Initialize wtp configuration (.wtp.yml) in the repo. Use this to configure the worktree base directory and optional hooks. Hook execution is disabled by default in this server unless allow_hooks=true. Returns JSON { path }.",
+        description = "Initialize wtp configuration (.wtp.yml) in the repo by running wtp init. The generated file includes example hooks (automations that can copy files, link shared dirs, or run setup commands) and a default base_dir (often ../worktrees). Hooks in .wtp.yml run after add-worktree (and during remove-worktree if configured). Inspect/edit the file to set defaults.base_dir and remove hooks (or enable allow_hooks) before add-worktree. Returns JSON { path }.",
         annotations(
             read_only_hint = false,
             destructive_hint = false,
@@ -328,7 +366,6 @@ impl WtpServer {
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
         Ok(Json(output))
     }
-
 }
 
 #[tool_handler]

@@ -306,7 +306,6 @@ async fn tools_return_structured_payloads() {
             .expect("script")
             .contains("init-bash")
     );
-
 }
 
 #[tokio::test]
