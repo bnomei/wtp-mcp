@@ -1,4 +1,4 @@
-#![cfg(all(unix, not(target_os = "linux")))]
+#![cfg(unix)]
 
 use rmcp::model::{
     CallToolRequestParams, NumberOrString, ReadResourceRequestParams, ResourceContents,
@@ -7,6 +7,7 @@ use rmcp::service::{RequestContext, RoleServer, RunningService, serve_directly};
 use rmcp::{ErrorData as McpError, ServerHandler};
 use serde_json::json;
 use std::fs;
+use std::io::Write;
 use std::path::PathBuf;
 use tempfile::TempDir;
 use tokio::io::duplex;
@@ -30,18 +31,23 @@ impl TestHarness {
         fs::create_dir_all(&repo_root).expect("repo dir");
 
         let wtp_path = dir.path().join("wtp");
-        fs::write(&wtp_path, stub_script()).expect("write stub");
+        let temp_path = dir.path().join("wtp.tmp");
+        {
+            let mut file = fs::File::create(&temp_path).expect("create stub");
+            file.write_all(stub_script().as_bytes())
+                .expect("write stub");
+            file.sync_all().expect("sync stub");
+        }
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let mut perms = fs::metadata(&wtp_path).expect("metadata").permissions();
+            let mut perms = fs::metadata(&temp_path).expect("metadata").permissions();
             perms.set_mode(0o755);
-            fs::set_permissions(&wtp_path, perms).expect("chmod");
+            fs::set_permissions(&temp_path, perms).expect("chmod");
         }
-        let sanity = std::process::Command::new(&wtp_path)
-            .arg("list")
-            .output()
-            .expect("run stub");
+        fs::rename(&temp_path, &wtp_path).expect("persist stub");
+
+        let sanity = run_stub_sanity(&wtp_path).expect("run stub");
         assert!(
             sanity.status.success(),
             "stub list failed: status={:?} stderr={}",
@@ -136,6 +142,29 @@ case \"$cmd\" in\n\
     ;;\n\
 esac\n"
         .to_string()
+}
+
+fn run_stub_sanity(path: &PathBuf) -> std::io::Result<std::process::Output> {
+    const MAX_RETRIES: u8 = 5;
+    const BASE_SLEEP_MS: u64 = 10;
+
+    let mut attempt = 0;
+    loop {
+        match std::process::Command::new(path).arg("list").output() {
+            Ok(output) => return Ok(output),
+            Err(err) if is_executable_file_busy(&err) && attempt < MAX_RETRIES => {
+                attempt += 1;
+                std::thread::sleep(std::time::Duration::from_millis(
+                    BASE_SLEEP_MS * attempt as u64,
+                ));
+            }
+            Err(err) => return Err(err),
+        }
+    }
+}
+
+fn is_executable_file_busy(err: &std::io::Error) -> bool {
+    err.raw_os_error() == Some(26)
 }
 
 fn extract_text(contents: &[ResourceContents]) -> String {

@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 use std::process::Command;
+use std::time::Duration;
 
 use crate::errors::{Result, WtpMcpError};
 
@@ -43,10 +44,7 @@ impl WtpRunner {
             "executing wtp command"
         );
 
-        let output = Command::new(&self.binary_path)
-            .args(args)
-            .current_dir(&self.repo_root)
-            .output()?;
+        let output = self.run_with_retry(args)?;
 
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
@@ -74,5 +72,38 @@ impl WtpRunner {
         }
 
         Ok(output.stdout)
+    }
+
+    fn run_with_retry(&self, args: &[&str]) -> std::io::Result<std::process::Output> {
+        const MAX_RETRIES: u8 = 5;
+        const BASE_SLEEP_MS: u64 = 10;
+
+        let mut attempt = 0;
+        loop {
+            match Command::new(&self.binary_path)
+                .args(args)
+                .current_dir(&self.repo_root)
+                .output()
+            {
+                Ok(output) => return Ok(output),
+                Err(err) if is_executable_file_busy(&err) && attempt < MAX_RETRIES => {
+                    attempt += 1;
+                    std::thread::sleep(Duration::from_millis(BASE_SLEEP_MS * attempt as u64));
+                }
+                Err(err) => return Err(err),
+            }
+        }
+    }
+}
+
+fn is_executable_file_busy(err: &std::io::Error) -> bool {
+    #[cfg(unix)]
+    {
+        err.raw_os_error() == Some(26)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = err;
+        false
     }
 }
