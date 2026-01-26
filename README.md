@@ -28,22 +28,12 @@ Works in any Git repo. The wtp binary is required and must be on PATH (or set vi
 cargo install wtp-mcp-rs
 ```
 
-### Homebrew (soon)
+### Homebrew
 ```bash
 brew install bnomei/wtp-mcp/wtp-mcp-rs
 ```
 
-### npm (soon)
-```bash
-npm install -g @bnomei/wtp-mcp-rs
-```
-
-### npx (no install) (soon)
-```bash
-npx -y @bnomei/wtp-mcp-rs@latest --repo-root /path/to/repo
-```
-
-### GitHub Releases (soon)
+### GitHub Releases
 Download a prebuilt archive from the GitHub Releases page, extract it, and place `wtp-mcp-rs` on your `PATH`.
 
 ### From source
