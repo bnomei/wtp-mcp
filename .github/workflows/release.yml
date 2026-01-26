@@ -52,6 +52,7 @@ jobs:
 
       - name: Resolve version
         id: version
+        shell: bash
         run: scripts/resolve-version.sh
 
       - name: Build (unix)
