@@ -13,9 +13,10 @@ if (-not (Test-Path $binPath)) {
 }
 
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
+$outDirFull = (Resolve-Path $OutDir).Path
 
 $archiveName = "$BinName-v$Version-$Target.zip"
-$archivePath = Join-Path $OutDir $archiveName
+$archivePath = Join-Path $outDirFull $archiveName
 
 $tempDir = Join-Path $env:TEMP ("wtp-mcp-rs-" + [Guid]::NewGuid().ToString())
 New-Item -ItemType Directory -Force -Path $tempDir | Out-Null
