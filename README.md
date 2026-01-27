@@ -190,7 +190,7 @@ The server exposes the following MCP resources:
 
 ## Skill
 
-`wtp-git-worktree-plus-with-mcp`:  Use this skill when the user wants to manage Git worktrees through the wtp MCP server (list, create, remove, resolve paths, init .wtp.yml, or prepare merge commands), especially when safety defaults around hooks and branch deletion matter. | [`skills/git-worktree-plus-with-mcp/SKILL.md`](skills/git-worktree-plus-with-mcp/SKILL.md) |
+ [`skills/git-worktree-plus-with-mcp/SKILL.md`](skills/git-worktree-plus-with-mcp/SKILL.md):  Use this skill when the user wants to manage Git worktrees through the wtp MCP server (list, create, remove, resolve paths, init .wtp.yml, or prepare merge commands), especially when safety defaults around hooks and branch deletion matter.
 
 ## Development
 
